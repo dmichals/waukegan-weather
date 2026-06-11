@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thursday Evening Weather – Waukegan Harbor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: transparent;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 16px;
+  }
+  .card {
+    background: linear-gradient(160deg, #0d1f3c 0%, #1a3a6b 60%, #0e2a50 100%);
+    border-radius: 18px;
+    padding: 20px 22px 18px;
+    color: white;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+  }
+  .location { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #6fa3d8; }
+  .date-label { font-size: 17px; font-weight: 600; color: #e8f2ff; margin-top: 2px; }
+  .time-range { font-size: 12px; color: #5a8bbf; margin-top: 1px; }
+  .water-temp-badge {
+    background: rgba(100,180,255,0.15);
+    border: 1px solid rgba(100,180,255,0.3);
+    border-radius: 10px;
+    padding: 6px 12px;
+    text-align: center;
+    min-width: 82px;
+  }
+  .wt-label { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #6db8f0; }
+  .wt-value { font-size: 22px; font-weight: 500; color: #a8d8ff; line-height: 1.2; }
+  .wt-sub { font-size: 9px; color: #4d8abf; line-height: 1.4; }
+  .hours-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 5px;
+    margin-bottom: 14px;
+  }
+  .hour-col {
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 8px 3px;
+    text-align: center;
+  }
+  .hour-time { font-size: 11px; font-weight: 600; color: #6fa3d8; margin-bottom: 4px; }
+  .hour-icon { font-size: 20px; line-height: 1; margin-bottom: 3px; }
+  .hour-temp { font-size: 14px; font-weight: 500; color: #e8f2ff; margin-bottom: 3px; }
+  .hour-cond { font-size: 8.5px; color: #7aabe0; line-height: 1.2; min-height: 20px; }
+  .hour-divider { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 4px 0; }
+  .hour-wind { font-size: 9.5px; color: #a0c8f0; font-weight: 500; }
+  .hour-gust { font-size: 8.5px; color: #5a8bbf; margin-top: 1px; }
+  .hour-dir  { font-size: 9px; color: #7aabe0; margin-top: 2px; }
+  .summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    border-top: 1px solid rgba(255,255,255,0.09);
+    padding-top: 12px;
+  }
+  .summary-item { text-align: center; }
+  .summary-label { font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #4d82b8; margin-bottom: 2px; }
+  .summary-value { font-size: 13px; font-weight: 500; color: #c8e0ff; }
+  .summary-sub { font-size: 9px; color: #4d82b8; }
+  .loading, .error { text-align: center; padding: 32px 20px; color: #6fa3d8; font-size: 14px; line-height: 1.6; }
+  .error { color: #f0a8a8; }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="loading">Loading Thursday evening forecast…</div>
+</div>
+<script>
+  const LAT      = 42.3584;
+  const LON      = -87.8448;
+  const TZ       = 'America/Chicago';
+  const LOCATION = 'Waukegan Harbor, IL';
+  const HOURS    = [17, 18, 19, 20, 21];
+  const BUOY_RSS = 'https://www.ndbc.noaa.gov/data/latest_obs/45186.rss';
+
+  // Returns THIS Thursday if today is Thursday, otherwise NEXT Thursday
+  function getTargetThursday() {
+    const today = new Date();
+    const day = today.getDay(); // 0=Sun, 4=Thu
+    if (day === 4) return today; // today IS Thursday
+    let d = (4 - day + 7) % 7;
+    const thu = new Date(today);
+    thu.setDate(today.getDate() + d);
+    return thu;
+  }
+
+  function fmtDate(d) {
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+  function padZ(n) { return String(n).padStart(2,'0'); }
+
+  function degreesToCompass(deg) {
+    if (deg === null || isNaN(deg)) return '—';
+    return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(deg/22.5)%16];
+  }
+
+  const WX = {
+    0:['Clear','☀️'],1:['Mainly Clear','🌤️'],2:['Partly Cloudy','⛅'],3:['Overcast','☁️'],
+    45:['Foggy','🌫️'],48:['Icy Fog','🌫️'],51:['Lt Drizzle','🌦️'],53:['Drizzle','🌦️'],
+    55:['Hvy Drizzle','🌧️'],61:['Lt Rain','🌧️'],63:['Rain','🌧️'],65:['Hvy Rain','🌧️'],
+    71:['Lt Snow','🌨️'],73:['Snow','❄️'],75:['Hvy Snow','❄️'],80:['Showers','🌦️'],
+    81:['Showers','🌧️'],82:['Hvy Showers','⛈️'],85:['Snow Showers','🌨️'],
+    95:['T-Storm','⛈️'],96:['T-Storm','⛈️'],99:['T-Storm','⛈️'],
+  };
+  function wx(code) { return WX[code] || ['Unknown','🌡️']; }
+  function fmtHour(h) { return `${h>12?h-12:h} ${h>=12?'PM':'AM'}`; }
+
+  // Fetch water temp from NDBC RSS feed via CORS proxy
+  async function fetchWaterTemp() {
+    const proxies = [
+      `https://corsproxy.io/?url=${encodeURIComponent(BUOY_RSS)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(BUOY_RSS)}`,
+    ];
+    for (const proxy of proxies) {
+      try {
+        const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const text = await res.text();
+
+        // The RSS description contains lines like "Water Temperature: 55.6°F (13.1°C)"
+        // Try that pattern first
+        let match = text.match(/Water\s+Temp(?:erature)?[^:]*:\s*([\d.]+)\s*[°]?\s*F/i);
+        if (match) return { temp: parseFloat(match[1]), source: 'NDBC buoy 45186' };
+
+        // Fallback: look for WTMP value in Celsius and convert
+        match = text.match(/Water\s+Temp(?:erature)?[^:]*:\s*[\d.]+\s*[°]?\s*F\s*\(([\d.]+)\s*[°]?\s*C\)/i);
+        if (match) {
+          const c = parseFloat(match[1]);
+          return { temp: +(c * 9/5 + 32).toFixed(1), source: 'NDBC buoy 45186' };
+        }
+
+        // Last resort: scan for any Celsius value labeled WTMP
+        match = text.match(/WTMP[^>]*>([\d.]+)</i);
+        if (match) {
+          const c = parseFloat(match[1]);
+          if (c < 50) return { temp: +(c * 9/5 + 32).toFixed(1), source: 'NDBC buoy 45186' };
+        }
+      } catch { /* try next */ }
+    }
+    return null;
+  }
+
+  async function load() {
+    const thursday = getTargetThursday();
+    const dateStr  = thursday.toISOString().split('T')[0];
+    const hourKeys = HOURS.map(h => `${dateStr}T${padZ(h)}:00`);
+    const isToday  = thursday.toDateString() === new Date().toDateString();
+
+    const wxUrl = `https://api.open-meteo.com/v1/forecast`
+      + `?latitude=${LAT}&longitude=${LON}`
+      + `&hourly=temperature_2m,weathercode,windspeed_10m,windgusts_10m,winddirection_10m`
+      + `&temperature_unit=fahrenheit&windspeed_unit=mph`
+      + `&timezone=${encodeURIComponent(TZ)}&forecast_days=16`;
+
+    try {
+      const [wxRes, waterData] = await Promise.all([fetch(wxUrl), fetchWaterTemp()]);
+      if (!wxRes.ok) throw new Error('Weather API error');
+      const wxData = await wxRes.json();
+
+      const times = wxData.hourly.time;
+      const temps = wxData.hourly.temperature_2m;
+      const codes = wxData.hourly.weathercode;
+      const winds = wxData.hourly.windspeed_10m;
+      const gusts = wxData.hourly.windgusts_10m;
+      const wdirs = wxData.hourly.winddirection_10m;
+
+      const hours = hourKeys.map((key, i) => {
+        const idx = times.indexOf(key);
+        if (idx === -1) return null;
+        return {
+          hour: HOURS[i],
+          temp: Math.round(temps[idx]),
+          code: codes[idx],
+          wind: Math.round(winds[idx]),
+          gust: Math.round(gusts[idx]),
+          dir:  degreesToCompass(wdirs[idx]),
+        };
+      }).filter(Boolean);
+
+      if (!hours.length) throw new Error('Forecast hours not available yet');
+
+      const avgTemp = Math.round(hours.reduce((a,b) => a+b.temp, 0) / hours.length);
+      const maxWind = Math.max(...hours.map(h => h.wind));
+      const maxGust = Math.max(...hours.map(h => h.gust));
+      const codeCount = {};
+      hours.forEach(h => codeCount[h.code] = (codeCount[h.code]||0)+1);
+      const dominantCode = parseInt(Object.entries(codeCount).sort((a,b)=>b[1]-a[1])[0][0]);
+      const [dominantDesc] = wx(dominantCode);
+
+      const waterBadgeHTML = waterData
+        ? `<div class="water-temp-badge">
+             <div class="wt-label">🌊 Water</div>
+             <div class="wt-value">${waterData.temp}°F</div>
+             <div class="wt-sub">NDBC buoy 45186<br>live reading</div>
+           </div>`
+        : `<div class="water-temp-badge">
+             <div class="wt-label">🌊 Water</div>
+             <div class="wt-value">—</div>
+             <div class="wt-sub">Buoy offline</div>
+           </div>`;
+
+      const hourCols = hours.map(h => {
+        const [desc, icon] = wx(h.code);
+        return `<div class="hour-col">
+          <div class="hour-time">${fmtHour(h.hour)}</div>
+          <div class="hour-icon">${icon}</div>
+          <div class="hour-temp">${h.temp}°</div>
+          <div class="hour-cond">${desc}</div>
+          <hr class="hour-divider">
+          <div class="hour-wind">💨 ${h.wind} mph</div>
+          <div class="hour-gust">▲ ${h.gust} mph</div>
+          <div class="hour-dir">${h.dir}</div>
+        </div>`;
+      }).join('');
+
+      const dayLabel = isToday ? 'This Thursday' : 'Next Thursday';
+
+      document.getElementById('card').innerHTML = `
+        <div class="header">
+          <div class="header-left">
+            <div class="location">⚓ ${LOCATION}</div>
+            <div class="date-label">${fmtDate(thursday)}</div>
+            <div class="time-range">${dayLabel} · 5 PM – 9 PM</div>
+          </div>
+          ${waterBadgeHTML}
+        </div>
+        <div class="hours-grid">${hourCols}</div>
+        <div class="summary">
+          <div class="summary-item">
+            <div class="summary-label">Avg Temp</div>
+            <div class="summary-value">${avgTemp}°F</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Max Wind</div>
+            <div class="summary-value">${maxWind} mph</div>
+            <div class="summary-sub">gusts to ${maxGust}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Conditions</div>
+            <div class="summary-value" style="font-size:11px">${dominantDesc}</div>
+          </div>
+        </div>`;
+    } catch(e) {
+      document.getElementById('card').innerHTML =
+        `<div class="error">Couldn't load the forecast.<br><small>${e.message}</small></div>`;
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>
