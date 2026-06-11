@@ -89,13 +89,14 @@
   const TZ       = 'America/Chicago';
   const LOCATION = 'Waukegan Harbor, IL';
   const HOURS    = [17, 18, 19, 20, 21];
-  const BUOY_RSS = 'https://www.ndbc.noaa.gov/data/latest_obs/45186.rss';
+  
+  // Realtime text data matrix directly tracking buoy observations
+  const BUOY_DATA_URL = 'https://www.ndbc.noaa.gov/data/realtime2/45186.txt';
 
-  // Returns THIS Thursday if today is Thursday, otherwise NEXT Thursday
   function getTargetThursday() {
     const today = new Date();
-    const day = today.getDay(); // 0=Sun, 4=Thu
-    if (day === 4) return today; // today IS Thursday
+    const day = today.getDay(); 
+    if (day === 4) return today; 
     let d = (4 - day + 7) % 7;
     const thu = new Date(today);
     thu.setDate(today.getDate() + d);
@@ -123,37 +124,39 @@
   function wx(code) { return WX[code] || ['Unknown','🌡️']; }
   function fmtHour(h) { return `${h>12?h-12:h} ${h>=12?'PM':'AM'}`; }
 
-  // Fetch water temp from NDBC RSS feed via CORS proxy
+  // Fetches latest table matrix data and explicitly parses the 'WTMP' column
   async function fetchWaterTemp() {
     const proxies = [
-      `https://corsproxy.io/?url=${encodeURIComponent(BUOY_RSS)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(BUOY_RSS)}`,
+      `https://corsproxy.io/?url=${encodeURIComponent(BUOY_DATA_URL)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(BUOY_DATA_URL)}`
     ];
+
     for (const proxy of proxies) {
       try {
-        const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(proxy, { signal: AbortSignal.timeout(6000) });
         if (!res.ok) continue;
         const text = await res.text();
-
-        // The RSS description contains lines like "Water Temperature: 55.6°F (13.1°C)"
-        // Try that pattern first
-        let match = text.match(/Water\s+Temp(?:erature)?[^:]*:\s*([\d.]+)\s*[°]?\s*F/i);
-        if (match) return { temp: parseFloat(match[1]), source: 'NDBC buoy 45186' };
-
-        // Fallback: look for WTMP value in Celsius and convert
-        match = text.match(/Water\s+Temp(?:erature)?[^:]*:\s*[\d.]+\s*[°]?\s*F\s*\(([\d.]+)\s*[°]?\s*C\)/i);
-        if (match) {
-          const c = parseFloat(match[1]);
-          return { temp: +(c * 9/5 + 32).toFixed(1), source: 'NDBC buoy 45186' };
+        
+        const lines = text.split('\n');
+        if (lines.length < 3) continue;
+        
+        // Line 0 lists data column categories; Line 2 represents the latest data row
+        const headers = lines[0].trim().split(/\s+/);
+        const latestData = lines[2].trim().split(/\s+/);
+        
+        const wtmpIndex = headers.indexOf('WTMP');
+        if (wtmpIndex !== -1 && latestData[wtmpIndex]) {
+          const tempC = parseFloat(latestData[wtmpIndex]);
+          
+          // Filters out typical placeholder error codes (like 99.0 or 999.0)
+          if (!isNaN(tempC) && tempC < 90) {
+            const tempF = (tempC * 9/5) + 32;
+            return { temp: tempF.toFixed(1), source: 'NDBC buoy 45186' };
+          }
         }
-
-        // Last resort: scan for any Celsius value labeled WTMP
-        match = text.match(/WTMP[^>]*>([\d.]+)</i);
-        if (match) {
-          const c = parseFloat(match[1]);
-          if (c < 50) return { temp: +(c * 9/5 + 32).toFixed(1), source: 'NDBC buoy 45186' };
-        }
-      } catch { /* try next */ }
+      } catch (e) {
+        console.warn("Proxy attempt failed, trying next...");
+      }
     }
     return null;
   }
