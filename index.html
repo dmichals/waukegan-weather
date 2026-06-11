@@ -11,7 +11,8 @@
     font-family: 'Inter', sans-serif;
     background: transparent;
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
     padding: 16px;
   }
@@ -23,6 +24,8 @@
     width: 100%;
     max-width: 400px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    position: relative;
+    overflow: hidden;
   }
   .header {
     display: flex;
@@ -33,6 +36,7 @@
   .location { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #6fa3d8; }
   .date-label { font-size: 17px; font-weight: 600; color: #e8f2ff; margin-top: 2px; }
   .time-range { font-size: 12px; color: #5a8bbf; margin-top: 1px; }
+
   .water-temp-badge {
     background: rgba(100,180,255,0.15);
     border: 1px solid rgba(100,180,255,0.3);
@@ -40,10 +44,14 @@
     padding: 6px 12px;
     text-align: center;
     min-width: 82px;
+    cursor: pointer;
+    transition: background 0.2s ease;
   }
+  .water-temp-badge:hover { background: rgba(100,180,255,0.25); }
   .wt-label { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #6db8f0; }
   .wt-value { font-size: 22px; font-weight: 500; color: #a8d8ff; line-height: 1.2; }
   .wt-sub { font-size: 9px; color: #4d8abf; line-height: 1.4; }
+
   .hours-grid {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -64,6 +72,7 @@
   .hour-wind { font-size: 9.5px; color: #a0c8f0; font-weight: 500; }
   .hour-gust { font-size: 8.5px; color: #5a8bbf; margin-top: 1px; }
   .hour-dir  { font-size: 9px; color: #7aabe0; margin-top: 2px; }
+
   .summary {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -75,92 +84,204 @@
   .summary-label { font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #4d82b8; margin-bottom: 2px; }
   .summary-value { font-size: 13px; font-weight: 500; color: #c8e0ff; }
   .summary-sub { font-size: 9px; color: #4d82b8; }
+
   .loading, .error { text-align: center; padding: 32px 20px; color: #6fa3d8; font-size: 14px; line-height: 1.6; }
   .error { color: #f0a8a8; }
+
+  /* Debug panel */
+  .debug-trigger {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    text-decoration: none;
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+  .debug-trigger:hover { color: rgba(255,255,255,0.7); }
+  .debug-panel {
+    display: none;
+    background: #060e1a;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 12px;
+    width: 100%;
+    max-width: 400px;
+    margin-top: 12px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #a2c4e8;
+    max-height: 250px;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .debug-line { border-bottom: 1px solid rgba(255,255,255,0.03); padding: 4px 0; word-break: break-all; }
+  .debug-success { color: #86efac; }
+  .debug-error { color: #fca5a5; }
 </style>
 </head>
 <body>
+
 <div class="card" id="card">
   <div class="loading">Loading Thursday evening forecast…</div>
 </div>
+
+<div class="debug-trigger" onclick="toggleDebug()">⚙️ Toggle Debug Diagnostics</div>
+<div class="debug-panel" id="debug-panel">
+  <div style="font-weight:bold;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:4px;margin-bottom:6px;">LIVE FETCH DIAGNOSTICS:</div>
+  <div id="debug-log"></div>
+</div>
+
 <script>
   const LAT      = 42.3584;
   const LON      = -87.8448;
   const TZ       = 'America/Chicago';
   const LOCATION = 'Waukegan Harbor, IL';
   const HOURS    = [17, 18, 19, 20, 21];
-  
-  // Realtime text data matrix directly tracking buoy observations
-  const BUOY_DATA_URL = 'https://www.ndbc.noaa.gov/data/realtime2/45186.txt';
 
+  // ── Logging ──────────────────────────────────────────────────────────────
+  function logDebug(msg, type = '') {
+    const el = document.getElementById('debug-log');
+    if (!el) return;
+    const line = document.createElement('div');
+    line.className = 'debug-line' + (type ? ' debug-' + type : '');
+    line.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.appendChild(line);
+    console.log('[Diagnostic]', msg);
+  }
+
+  function toggleDebug() {
+    const p = document.getElementById('debug-panel');
+    if (p) p.style.display = p.style.display === 'block' ? 'none' : 'block';
+  }
+
+  // ── Date helpers ─────────────────────────────────────────────────────────
   function getTargetThursday() {
     const today = new Date();
-    const day = today.getDay(); 
-    if (day === 4) return today; 
-    let d = (4 - day + 7) % 7;
-    const thu = new Date(today);
-    thu.setDate(today.getDate() + d);
+    const diff  = (4 - today.getDay() + 7) % 7;
+    const thu   = new Date(today);
+    thu.setDate(today.getDate() + (diff === 0 ? 0 : diff));
     return thu;
   }
 
   function fmtDate(d) {
     return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   }
-  function padZ(n) { return String(n).padStart(2,'0'); }
+  function padZ(n) { return String(n).padStart(2, '0'); }
 
   function degreesToCompass(deg) {
     if (deg === null || isNaN(deg)) return '—';
-    return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(deg/22.5)%16];
+    return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(deg / 22.5) % 16];
   }
 
+  // ── Weather code map ─────────────────────────────────────────────────────
   const WX = {
-    0:['Clear','☀️'],1:['Mainly Clear','🌤️'],2:['Partly Cloudy','⛅'],3:['Overcast','☁️'],
-    45:['Foggy','🌫️'],48:['Icy Fog','🌫️'],51:['Lt Drizzle','🌦️'],53:['Drizzle','🌦️'],
-    55:['Hvy Drizzle','🌧️'],61:['Lt Rain','🌧️'],63:['Rain','🌧️'],65:['Hvy Rain','🌧️'],
-    71:['Lt Snow','🌨️'],73:['Snow','❄️'],75:['Hvy Snow','❄️'],80:['Showers','🌦️'],
-    81:['Showers','🌧️'],82:['Hvy Showers','⛈️'],85:['Snow Showers','🌨️'],
-    95:['T-Storm','⛈️'],96:['T-Storm','⛈️'],99:['T-Storm','⛈️'],
+    0:['Clear','☀️'], 1:['Mainly Clear','🌤️'], 2:['Partly Cloudy','⛅'], 3:['Overcast','☁️'],
+    45:['Foggy','🌫️'], 48:['Icy Fog','🌫️'], 51:['Lt Drizzle','🌦️'], 53:['Drizzle','🌦️'],
+    55:['Hvy Drizzle','🌧️'], 61:['Lt Rain','🌧️'], 63:['Rain','🌧️'], 65:['Hvy Rain','🌧️'],
+    71:['Lt Snow','🌨️'], 73:['Snow','❄️'], 75:['Hvy Snow','❄️'], 80:['Showers','🌦️'],
+    81:['Showers','🌧️'], 82:['Hvy Showers','⛈️'], 85:['Snow Showers','🌨️'],
+    95:['T-Storm','⛈️'], 96:['T-Storm','⛈️'], 99:['T-Storm','⛈️'],
   };
-  function wx(code) { return WX[code] || ['Unknown','🌡️']; }
-  function fmtHour(h) { return `${h>12?h-12:h} ${h>=12?'PM':'AM'}`; }
+  function wx(code)   { return WX[code] || ['Unknown', '🌡️']; }
+  function fmtHour(h) { return `${h > 12 ? h - 12 : h} ${h >= 12 ? 'PM' : 'AM'}`; }
 
-  // Fetches latest table matrix data and explicitly parses the 'WTMP' column
-  async function fetchWaterTemp() {
-    const proxies = [
-      `https://corsproxy.io/?url=${encodeURIComponent(BUOY_DATA_URL)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(BUOY_DATA_URL)}`
-    ];
+  // ── Water temperature ────────────────────────────────────────────────────
+  //
+  // Two direct, CORS-friendly sources raced in parallel.
+  // No third-party proxies — they are all unreliable from a browser context.
+  //
+  //  P1 · Open-Meteo Marine API
+  //       Returns lake surface temperature at our exact lat/lon.
+  //       Same provider as the weather data; native CORS; no auth required.
+  //
+  //  P2 · NWS OMR LOT bulletin
+  //       Official Southern Lake Michigan water temp product.
+  //       Two-step fetch (product list → bulletin text), but both endpoints
+  //       support CORS natively with no custom headers needed.
+  //
+  // Whichever resolves first wins. On total failure the badge shows "—".
 
-    for (const proxy of proxies) {
-      try {
-        const res = await fetch(proxy, { signal: AbortSignal.timeout(6000) });
-        if (!res.ok) continue;
-        const text = await res.text();
-        
-        const lines = text.split('\n');
-        if (lines.length < 3) continue;
-        
-        // Line 0 lists data column categories; Line 2 represents the latest data row
-        const headers = lines[0].trim().split(/\s+/);
-        const latestData = lines[2].trim().split(/\s+/);
-        
-        const wtmpIndex = headers.indexOf('WTMP');
-        if (wtmpIndex !== -1 && latestData[wtmpIndex]) {
-          const tempC = parseFloat(latestData[wtmpIndex]);
-          
-          // Filters out typical placeholder error codes (like 99.0 or 999.0)
-          if (!isNaN(tempC) && tempC < 90) {
-            const tempF = (tempC * 9/5) + 32;
-            return { temp: tempF.toFixed(1), source: 'NDBC buoy 45186' };
-          }
-        }
-      } catch (e) {
-        console.warn("Proxy attempt failed, trying next...");
-      }
+  async function fetchWaterTempOpenMeteo() {
+    logDebug('[P1: Open-Meteo Marine] Requesting lake surface temp…');
+    const url = `https://marine-api.open-meteo.com/v1/marine`
+      + `?latitude=${LAT}&longitude=${LON}`
+      + `&hourly=sea_surface_temperature&temperature_unit=fahrenheit`
+      + `&timezone=${encodeURIComponent(TZ)}&forecast_days=1`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error('Status ' + res.status);
+    const data = await res.json();
+
+    const times = data.hourly?.time ?? [];
+    const temps = data.hourly?.sea_surface_temperature ?? [];
+    if (!temps.length) throw new Error('No SST data in response');
+
+    // Most recent non-null reading at or before now
+    const now = new Date();
+    let best = null;
+    for (let i = 0; i < times.length; i++) {
+      if (new Date(times[i]) <= now && temps[i] !== null) best = temps[i];
     }
-    return null;
+    if (best === null) throw new Error('No current SST reading available');
+
+    logDebug(`[P1: Open-Meteo Marine] SUCCESS: ${best.toFixed(1)}°F`, 'success');
+    return { temp: best.toFixed(1), source: 'Open-Meteo Marine' };
   }
 
+  async function fetchWaterTempNWS() {
+    logDebug('[P2: NWS OMR LOT] Fetching product list…');
+    const listRes = await fetch('https://api.weather.gov/products/types/OMR/locations/LOT', {
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!listRes.ok) throw new Error('List status ' + listRes.status);
+    const listData = await listRes.json();
+
+    const products = listData['@graph'] ?? listData['products'] ?? [];
+    if (!products.length) throw new Error('Empty product list');
+
+    const id = products[0]['@id'] ?? products[0].id;
+    if (!id) throw new Error('No product ID in list');
+
+    logDebug('[P2: NWS OMR LOT] Fetching bulletin…');
+    const prodRes = await fetch(id, { signal: AbortSignal.timeout(8000) });
+    if (!prodRes.ok) throw new Error('Bulletin status ' + prodRes.status);
+    const prodData = await prodRes.json();
+    const text = prodData.productText ?? '';
+
+    // Matches "Waukegan Buoy...........56." or "Waukegan...........56"
+    const match = text.match(/Waukegan(?:\s+Buoy)?\.+(\d+(?:\.\d+)?)/i);
+    if (!match) throw new Error('Waukegan temp not found in bulletin');
+    const val = parseFloat(match[1]);
+    if (isNaN(val) || val < 32 || val > 90) throw new Error('Value out of range: ' + val);
+
+    logDebug(`[P2: NWS OMR LOT] SUCCESS: ${val.toFixed(1)}°F`, 'success');
+    return { temp: val.toFixed(1), source: 'NWS Lake Temps' };
+  }
+
+  function fetchWaterTemp() {
+    return new Promise(resolve => {
+      let settled = false;
+      let failures = 0;
+      const sources = [fetchWaterTempOpenMeteo, fetchWaterTempNWS];
+
+      sources.forEach((fn, i) => {
+        fn()
+          .then(result => { if (!settled) { settled = true; resolve(result); } })
+          .catch(err => {
+            logDebug(`[P${i + 1}] Failed: ${err.message}`, 'error');
+            if (++failures === sources.length && !settled) {
+              logDebug('All water-temp sources failed — showing "—"', 'error');
+              settled = true;
+              resolve(null);
+            }
+          });
+      });
+    });
+  }
+
+  // ── Main render ──────────────────────────────────────────────────────────
   async function load() {
     const thursday = getTargetThursday();
     const dateStr  = thursday.toISOString().split('T')[0];
@@ -200,25 +321,20 @@
 
       if (!hours.length) throw new Error('Forecast hours not available yet');
 
-      const avgTemp = Math.round(hours.reduce((a,b) => a+b.temp, 0) / hours.length);
-      const maxWind = Math.max(...hours.map(h => h.wind));
-      const maxGust = Math.max(...hours.map(h => h.gust));
-      const codeCount = {};
-      hours.forEach(h => codeCount[h.code] = (codeCount[h.code]||0)+1);
-      const dominantCode = parseInt(Object.entries(codeCount).sort((a,b)=>b[1]-a[1])[0][0]);
+      const avgTemp      = Math.round(hours.reduce((a, b) => a + b.temp, 0) / hours.length);
+      const maxWind      = Math.max(...hours.map(h => h.wind));
+      const maxGust      = Math.max(...hours.map(h => h.gust));
+      const codeCount    = {};
+      hours.forEach(h => codeCount[h.code] = (codeCount[h.code] || 0) + 1);
+      const dominantCode = parseInt(Object.entries(codeCount).sort((a, b) => b[1] - a[1])[0][0]);
       const [dominantDesc] = wx(dominantCode);
 
-      const waterBadgeHTML = waterData
-        ? `<div class="water-temp-badge">
-             <div class="wt-label">🌊 Water</div>
-             <div class="wt-value">${waterData.temp}°F</div>
-             <div class="wt-sub">NDBC buoy 45186<br>live reading</div>
-           </div>`
-        : `<div class="water-temp-badge">
-             <div class="wt-label">🌊 Water</div>
-             <div class="wt-value">—</div>
-             <div class="wt-sub">Buoy offline</div>
-           </div>`;
+      const waterBadgeHTML = `
+        <div class="water-temp-badge" onclick="toggleDebug()" title="${waterData ? waterData.source : 'Data unavailable'}">
+          <div class="wt-label">🌊 Water</div>
+          <div class="wt-value">${waterData ? waterData.temp + '°F' : '—'}</div>
+          <div class="wt-sub">${waterData ? waterData.source + '<br>live reading' : 'Data unavailable'}</div>
+        </div>`;
 
       const hourCols = hours.map(h => {
         const [desc, icon] = wx(h.code);
@@ -261,7 +377,8 @@
             <div class="summary-value" style="font-size:11px">${dominantDesc}</div>
           </div>
         </div>`;
-    } catch(e) {
+
+    } catch (e) {
       document.getElementById('card').innerHTML =
         `<div class="error">Couldn't load the forecast.<br><small>${e.message}</small></div>`;
     }
